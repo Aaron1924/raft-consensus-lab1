@@ -61,6 +61,7 @@ def get_service_stub(node_address: str) -> pb_grpc.RaftElectionServiceStub:
 class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
+        super().__init__()
         # log receiving
         self.logs: [LogEntry] = []
         self.commit_length: int = 0
@@ -81,7 +82,21 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.leader_address = None
         self.leader_timer = None
         self.should_interrupt = False
-        super().__init__()
+
+        #MongoBD connection
+        self.mongo_client = MongoClient("mongo://localhost:27017/")
+        self.db = self.mongo_client["raft_db"]
+        self.term_collection = self.db["terms"]
+        self.logs_collection = self.db["logs"]
+
+        #Load Current Term or set to 0
+        term_data = self.term_collection.find_one({"server_id": server_id})
+        if term_data:
+            self.current_term = term_data["current_term"]
+        else:
+            self.current_term = 0
+            self.term_collection.insert_one({"server_id": server_id, "current_term": self.current_term})
+
 
     def start_election_timer(self) -> threading.Timer:
         """ Unit of timeout is ms """
@@ -92,6 +107,14 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
     def start_following(self):
         self.state = "follower"
         print(f"I am a follower. Term: {self.current_term}")
+
+        #Save current term to MongoDB
+        self.term_collection.update_one(
+            {"server_id": self.server_id},
+            {"%set": {"current_term": self.current_term}},
+            upsert=True
+        )
+
         self.election_timer = self.start_election_timer()
 
     def start_election(self):
@@ -102,6 +125,15 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
         self.state = "candidate"
         self.current_term += 1
+
+        #Save current term to MongoDB
+        self.term_collection.update_one(
+            {"server_id": self.server_id},
+            {"$set": {"current_term": self.current_term}},
+            upsert=True
+        )
+        
+
         self.current_vote = self.server_id
         print(f"Voted for node {self.server_id}")
         number_of_voted = 1  # because server initially votes for itself
@@ -267,7 +299,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             if self.state != "follower":
                 self.start_following()
             self.current_vote = None
-
+#new
     def append_logs(self, log_length: int, leader_commit: int, entries: [LogEntry]) -> None:
         if len(entries) > 0 and len(self.logs) > log_length:
             if self.logs[log_length].term != entries[0].term:
@@ -276,6 +308,15 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         if log_length + len(entries) > len(self.logs):
             for i in range(len(self.logs) - log_length, len(entries)):
                 self.logs.append(entries[i])
+
+                #Save to MongoDB
+                self.logs_collection.insert_one(
+                    {"server_id": self.server_id,
+                    "term": entries[i].term,
+                    "key": entries[i].keyValue.key,
+                    "value": entries[i].keyValue.value                    
+                    }
+                )
 
         if leader_commit > self.commit_length:
             for i in range(self.commit_length, leader_commit):
