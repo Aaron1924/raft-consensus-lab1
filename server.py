@@ -6,7 +6,7 @@ import threading
 import time
 from concurrent import futures
 from typing import Callable, Any
-
+from pymongo import MongoClient
 import grpc
 import raft_pb2
 import raft_pb2_grpc as pb_grpc
@@ -62,8 +62,15 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
         super().__init__()
+
+        self.mongo_client = MongoClient("mongodb://localhost:27017/")
+        self.db = self.mongo_client["raft_db"]
+        self.term_collection = self.db["terms"]
+        self.logs_collection = self.db["logs"]
+        print(f"MongoDB connected. DB: {self.db}, Term Collection: {self.term_collection}, Logs Collection: {self.logs_collection}")
+
         # log receiving
-        self.logs: [LogEntry] = []
+        self.logs: [LogEntry] = []        
         self.commit_length: int = 0
         self.sent_length: dict[str, int] = {}
         self.acked_length: dict[str, int] = {}
@@ -84,10 +91,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.should_interrupt = False
 
         #MongoBD connection
-        self.mongo_client = MongoClient("mongo://localhost:27017/")
-        self.db = self.mongo_client["raft_db"]
-        self.term_collection = self.db["terms"]
-        self.logs_collection = self.db["logs"]
+    
 
         #Load Current Term or set to 0
         term_data = self.term_collection.find_one({"server_id": server_id})
@@ -111,7 +115,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         #Save current term to MongoDB
         self.term_collection.update_one(
             {"server_id": self.server_id},
-            {"%set": {"current_term": self.current_term}},
+            {"$set": {"current_term": self.current_term}},
             upsert=True
         )
 
@@ -427,6 +431,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 class SuspendableRaftElectionService(RaftElectionService):
 
     def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
+        # Ensure that the RaftElectionService is properly initialized
         super().__init__(server_id, server_address, servers)
         self.suspended = False
 
