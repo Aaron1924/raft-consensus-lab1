@@ -25,14 +25,13 @@ SetValResponse = raft_pb2.SetValResponse
 GetValResponse = raft_pb2.GetValResponse
 LogEntry = raft_pb2.LogEntry
 
-HEARTBEAT_INTERVAL = 200  # ms
+HEARTBEAT_INTERVAL = 2000  # ms
 ELECTION_INTERVAL = 500, 800  # ms
 
 
 def parse_server_config(config: str) -> (int, str):
-    params = config.split()
-    return int(params[0]), f"{params[1]}:{params[2]}"
-
+    params = config.replace('[', '').replace(']', '').split()
+    return int(params[0].replace('Node', '')), f"{params[1]}:{params[2]}"
 
 def generate_random_timeout() -> int:
     return random.randint(ELECTION_INTERVAL[0], ELECTION_INTERVAL[1])
@@ -62,10 +61,12 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
         super().__init__()
-
-        self.mongo_client = MongoClient("mongodb://localhost:27017/")
-        self.db = self.mongo_client["raft_db"]
-        self.term_collection = self.db["terms"]
+        
+        #MongoBD connection
+        database_name = f"raft_node_{self.server_id}_db"
+        self.mongo_client = MongoClient("mongodb://localhost:27017/{database_name}")
+        self.db = self.mongo_client[database_name]
+        self.term_collection = self.db["current terms"]
         self.logs_collection = self.db["logs"]
         print(f"MongoDB connected. DB: {self.db}, Term Collection: {self.term_collection}, Logs Collection: {self.logs_collection}")
 
@@ -90,7 +91,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.leader_timer = None
         self.should_interrupt = False
 
-        #MongoBD connection
     
 
         #Load Current Term or set to 0
@@ -432,6 +432,9 @@ class SuspendableRaftElectionService(RaftElectionService):
 
     def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
         # Ensure that the RaftElectionService is properly initialized
+        self.server_id = server_id  
+        self.server_address = server_address
+        self.servers = servers
         super().__init__(server_id, server_address, servers)
         self.suspended = False
 
