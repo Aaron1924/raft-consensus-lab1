@@ -25,7 +25,7 @@ SetValResponse = raft_pb2.SetValResponse
 GetValResponse = raft_pb2.GetValResponse
 LogEntry = raft_pb2.LogEntry
 
-HEARTBEAT_INTERVAL = 2000  # ms
+HEARTBEAT_INTERVAL = 5000  # ms
 ELECTION_INTERVAL = 500, 800  # ms
 
 
@@ -68,6 +68,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.db = self.mongo_client[database_name]
         self.term_collection = self.db["current terms"]
         self.logs_collection = self.db["logs"]
+        self.status_collection = self.db["node_status"]
         print(f"MongoDB connected. DB: {self.db}, Term Collection: {self.term_collection}, Logs Collection: {self.logs_collection}")
 
         # log receiving
@@ -90,8 +91,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.leader_address = None
         self.leader_timer = None
         self.should_interrupt = False
-
-    
+        
 
         #Load Current Term or set to 0
         term_data = self.term_collection.find_one({"server_id": server_id})
@@ -100,6 +100,14 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         else:
             self.current_term = 0
             self.term_collection.insert_one({"server_id": server_id, "current_term": self.current_term})
+
+        #Save initial status as "follower"
+        self.status_collection.update_one(
+            {"server.py": self.server_id},
+            {"$set":{"status": "follower", "term": self.current_term}},
+            upsert=True
+        )
+        self.start_following()
 
 
     def start_election_timer(self) -> threading.Timer:
@@ -118,7 +126,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             {"$set": {"current_term": self.current_term}},
             upsert=True
         )
-
+        self.status_collection.update_one(
+            {"server_id" : self.server_id},
+            {"$set": {"status": "follower", "term": self.current_term}},
+            upsert=True
+        )
         self.election_timer = self.start_election_timer()
 
     def start_election(self):
@@ -136,7 +148,12 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             {"$set": {"current_term": self.current_term}},
             upsert=True
         )
-        
+
+        self.status_collection.update_one(
+        {"server_id": self.server_id},
+        {"$set": {"status": "candidate", "term": self.current_term}},
+        upsert=True
+        )
 
         self.current_vote = self.server_id
         print(f"Voted for node {self.server_id}")
@@ -202,6 +219,13 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.state = "leader"
         self.leader_id = self.server_id
         self.leader_address = self.server_address
+
+        # Save current status to MongoDB
+        self.status_collection.update_one(
+        {"server_id": self.server_id},
+        {"$set": {"status": "leader", "term": self.current_term}},
+        upsert=True
+        )
 
         for _, server_address in self.servers.items():
             self.sent_length[server_address] = len(self.logs)
