@@ -16,6 +16,7 @@ service RaftElectionService {
   rpc GetVal(Key) returns (GetValResponse);
 }
 
+
 message VoteRequest {
   uint64 candidateTerm = 1;
   uint64 candidateId = 2;
