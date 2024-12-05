@@ -768,7 +768,8 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.db = self.mongo_client[database_name]
         self.term_collection = self.db["current terms"]
         self.logs_collection = self.db["logs"]
-        print(f"MongoDB connected. DB: {self.db}, Term Collection: {self.term_collection}, Logs Collection: {self.logs_collection}")
+        self.data= self.db["data"]
+        print(f"MongoDB connected. DB: {self.db}, Term Collection: {self.term_collection}, Logs Collection: {self.logs_collection}, Data Collection: {self.data}")
 
         # log receiving
         self.logs: [LogEntry] = []        

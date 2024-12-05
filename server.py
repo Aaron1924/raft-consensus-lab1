@@ -68,17 +68,17 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.db = self.mongo_client[database_name]
         self.term_collection = self.db["current terms"]
         self.logs_collection = self.db["logs"]
-        print(f"MongoDB connected. DB: {self.db}, Term Collection: {self.term_collection}, Logs Collection: {self.logs_collection}")
         committed_data = self.db["committed_data"].find()
         for item in committed_data:
             self.data[item["key"]] = item["value"]  
-        print(f"Loaded committed data from MongoDB: {self.data}")
+        print(f"MongoDB connected. DB: {self.db}, Term Collection: {self.term_collection}, Logs Collection: {self.logs_collection}, committed data: {committed_data}")
         # log receiving
         self.logs: [LogEntry] = []        
         self.commit_length: int = 0
         self.sent_length: dict[str, int] = {}
         self.acked_length: dict[str, int] = {}
         self.data: dict[str, str] = {}
+        
 
         self.current_term = 0
         self.server_id = server_id
