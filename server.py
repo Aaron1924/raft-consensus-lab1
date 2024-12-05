@@ -69,7 +69,10 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.term_collection = self.db["current terms"]
         self.logs_collection = self.db["logs"]
         print(f"MongoDB connected. DB: {self.db}, Term Collection: {self.term_collection}, Logs Collection: {self.logs_collection}")
-
+        committed_data = self.db["committed_data"].find()
+        for item in committed_data:
+            self.data[item["key"]] = item["value"]  
+        print(f"Loaded committed data from MongoDB: {self.data}")
         # log receiving
         self.logs: [LogEntry] = []        
         self.commit_length: int = 0
@@ -286,7 +289,14 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         if len(ready) > 0 and max(ready) > self.commit_length and self.logs[max(ready) - 1].term == self.current_term:
             for i in range(self.commit_length, max(ready)):
                 key_value = self.logs[i].keyValue
-                self.data[key_value.key] = key_value.value
+                # Update MongoDB with the committed key-value pair
+                self.db["committed_data"].update_one(
+                    {"key": key_value.key}, 
+                    {"$set": {"value": key_value.value, "term": self.current_term}},
+                    upsert=True # Insert if the key doesn't exist
+                )
+                self.data[key_value.key] = key_value.value  # Also update in-memory cache
+
             self.commit_length = max(ready)
 
     def on_append_response(self, follower_address: str, term: int, ack: int, success: bool):
@@ -422,7 +432,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             value = self.data[request.key]
             return GetValResponse(success=True, value=value)
         else:
-            return GetValResponse(success=False)
+            val = self.db["committed_data"].find_one({"key":request.key})
+            if val:
+                return GetValResponse(success=True, value=val["value"])
+            else:  
+                return GetValResponse(success=False)
 
     def Suspend(self, request, context):
         pass
@@ -435,6 +449,7 @@ class SuspendableRaftElectionService(RaftElectionService):
         self.server_id = server_id  
         self.server_address = server_address
         self.servers = servers
+        self.data = {}
         super().__init__(server_id, server_address, servers)
         self.suspended = False
 
