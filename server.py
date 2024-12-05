@@ -69,6 +69,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.term_collection = self.db["current terms"]
         self.logs_collection = self.db["logs"]
         self.status_collection = self.db["node_status"]
+        
         print(f"MongoDB connected. DB: {self.db}, Term Collection: {self.term_collection}, Logs Collection: {self.logs_collection}")
 
         # log receiving
@@ -436,14 +437,25 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             log_entry = LogEntry(keyValue=request, term=self.current_term)
             self.logs.append(log_entry)
             self.acked_length[self.server_address] = len(self.logs)
+
+            self.logs_collection.insert_one(
+                {"server_id": self.server_id,
+                "term": log_entry.term,
+                "key": log_entry.keyValue.key,
+                "value": log_entry.keyValue.value
+                }
+            )
             return SetValResponse(success=True)
         else:
             client_stub = get_service_stub(self.leader_address)
             return client_stub.SetVal(request)
 
     def GetVal(self, request, context):
-        if request.key in self.data:
-            value = self.data[request.key]
+        log_entry = self.logs_collection.find_one(
+            {"server_id": self.server_id, "key": request.key}
+        )
+        if log_entry:
+            value = log_entry["value"]
             return GetValResponse(success=True, value=value)
         else:
             return GetValResponse(success=False)
