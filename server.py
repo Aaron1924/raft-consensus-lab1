@@ -6,7 +6,7 @@ import threading
 import time
 from concurrent import futures
 from typing import Callable, Any
-
+from pymongo import MongoClient
 import grpc
 import raft_pb2
 import raft_pb2_grpc as pb_grpc
@@ -25,14 +25,13 @@ SetValResponse = raft_pb2.SetValResponse
 GetValResponse = raft_pb2.GetValResponse
 LogEntry = raft_pb2.LogEntry
 
-HEARTBEAT_INTERVAL = 200  # ms
+HEARTBEAT_INTERVAL = 5000  # ms
 ELECTION_INTERVAL = 500, 800  # ms
 
 
 def parse_server_config(config: str) -> (int, str):
-    params = config.split()
-    return int(params[0]), f"{params[1]}:{params[2]}"
-
+    params = config.replace('[', '').replace(']', '').split()
+    return int(params[0].replace('Node', '')), f"{params[1]}:{params[2]}"
 
 def generate_random_timeout() -> int:
     return random.randint(ELECTION_INTERVAL[0], ELECTION_INTERVAL[1])
@@ -61,8 +60,23 @@ def get_service_stub(node_address: str) -> pb_grpc.RaftElectionServiceStub:
 class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
+        super().__init__()
+        
+        #MongoBD connection
+        database_name = f"raft_node_{self.server_id}_db"
+        self.mongo_client = MongoClient("mongodb://localhost:27017/{database_name}")
+        self.db = self.mongo_client[database_name]
+        self.term_collection = self.db["current terms"]
+        self.logs_collection = self.db["logs"]
+        self.status_collection = self.db["node_status"]
+        
+        print(f"MongoDB connected. DB: {self.db}, Term Collection: {self.term_collection}, Logs Collection: {self.logs_collection}")
+        committed_data = self.db["committed_data"].find()
+        for item in committed_data:
+            self.data[item["key"]] = item["value"]  
+        print(f"Loaded committed data from MongoDB: {self.data}")
         # log receiving
-        self.logs: [LogEntry] = []
+        self.logs: [LogEntry] = []        
         self.commit_length: int = 0
         self.sent_length: dict[str, int] = {}
         self.acked_length: dict[str, int] = {}
@@ -81,7 +95,24 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.leader_address = None
         self.leader_timer = None
         self.should_interrupt = False
-        super().__init__()
+        
+
+        #Load Current Term or set to 0
+        term_data = self.term_collection.find_one({"server_id": server_id})
+        if term_data:
+            self.current_term = term_data["current_term"]
+        else:
+            self.current_term = 0
+            self.term_collection.insert_one({"server_id": server_id, "current_term": self.current_term})
+
+        #Save initial status as "follower"
+        self.status_collection.update_one(
+            {"server.py": self.server_id},
+            {"$set":{"status": "follower", "term": self.current_term}},
+            upsert=True
+        )
+        self.start_following()
+
 
     def start_election_timer(self) -> threading.Timer:
         """ Unit of timeout is ms """
@@ -92,6 +123,18 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
     def start_following(self):
         self.state = "follower"
         print(f"I am a follower. Term: {self.current_term}")
+
+        #Save current term to MongoDB
+        self.term_collection.update_one(
+            {"server_id": self.server_id},
+            {"$set": {"current_term": self.current_term}},
+            upsert=True
+        )
+        self.status_collection.update_one(
+            {"server_id" : self.server_id},
+            {"$set": {"status": "follower", "term": self.current_term}},
+            upsert=True
+        )
         self.election_timer = self.start_election_timer()
 
     def start_election(self):
@@ -102,6 +145,20 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
         self.state = "candidate"
         self.current_term += 1
+
+        #Save current term to MongoDB
+        self.term_collection.update_one(
+            {"server_id": self.server_id},
+            {"$set": {"current_term": self.current_term}},
+            upsert=True
+        )
+
+        self.status_collection.update_one(
+        {"server_id": self.server_id},
+        {"$set": {"status": "candidate", "term": self.current_term}},
+        upsert=True
+        )
+
         self.current_vote = self.server_id
         print(f"Voted for node {self.server_id}")
         number_of_voted = 1  # because server initially votes for itself
@@ -166,6 +223,13 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.state = "leader"
         self.leader_id = self.server_id
         self.leader_address = self.server_address
+
+        # Save current status to MongoDB
+        self.status_collection.update_one(
+        {"server_id": self.server_id},
+        {"$set": {"status": "leader", "term": self.current_term}},
+        upsert=True
+        )
 
         for _, server_address in self.servers.items():
             self.sent_length[server_address] = len(self.logs)
@@ -250,7 +314,14 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         if len(ready) > 0 and max(ready) > self.commit_length and self.logs[max(ready) - 1].term == self.current_term:
             for i in range(self.commit_length, max(ready)):
                 key_value = self.logs[i].keyValue
-                self.data[key_value.key] = key_value.value
+                # Update MongoDB with the committed key-value pair
+                self.db["committed_data"].update_one(
+                    {"key": key_value.key}, 
+                    {"$set": {"value": key_value.value, "term": self.current_term}},
+                    upsert=True # Insert if the key doesn't exist
+                )
+                self.data[key_value.key] = key_value.value  # Also update in-memory cache
+
             self.commit_length = max(ready)
 
     def on_append_response(self, follower_address: str, term: int, ack: int, success: bool):
@@ -267,7 +338,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             if self.state != "follower":
                 self.start_following()
             self.current_vote = None
-
+#new
     def append_logs(self, log_length: int, leader_commit: int, entries: [LogEntry]) -> None:
         if len(entries) > 0 and len(self.logs) > log_length:
             if self.logs[log_length].term != entries[0].term:
@@ -276,6 +347,15 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         if log_length + len(entries) > len(self.logs):
             for i in range(len(self.logs) - log_length, len(entries)):
                 self.logs.append(entries[i])
+
+                #Save to MongoDB
+                self.logs_collection.insert_one(
+                    {"server_id": self.server_id,
+                    "term": entries[i].term,
+                    "key": entries[i].keyValue.key,
+                    "value": entries[i].keyValue.value                    
+                    }
+                )
 
         if leader_commit > self.commit_length:
             for i in range(self.commit_length, leader_commit):
@@ -367,17 +447,32 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             log_entry = LogEntry(keyValue=request, term=self.current_term)
             self.logs.append(log_entry)
             self.acked_length[self.server_address] = len(self.logs)
+
+            self.logs_collection.insert_one(
+                {"server_id": self.server_id,
+                "term": log_entry.term,
+                "key": log_entry.keyValue.key,
+                "value": log_entry.keyValue.value
+                }
+            )
             return SetValResponse(success=True)
         else:
             client_stub = get_service_stub(self.leader_address)
             return client_stub.SetVal(request)
 
     def GetVal(self, request, context):
-        if request.key in self.data:
-            value = self.data[request.key]
+        log_entry = self.logs_collection.find_one(
+            {"server_id": self.server_id, "key": request.key}
+        )
+        if log_entry:
+            value = log_entry["value"]
             return GetValResponse(success=True, value=value)
         else:
-            return GetValResponse(success=False)
+            val = self.db["committed_data"].find_one({"key":request.key})
+            if val:
+                return GetValResponse(success=True, value=val["value"])
+            else:  
+                return GetValResponse(success=False)
 
     def Suspend(self, request, context):
         pass
@@ -386,6 +481,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 class SuspendableRaftElectionService(RaftElectionService):
 
     def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
+        # Ensure that the RaftElectionService is properly initialized
+        self.server_id = server_id  
+        self.server_address = server_address
+        self.servers = servers
+        self.data = {}
         super().__init__(server_id, server_address, servers)
         self.suspended = False
 

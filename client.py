@@ -92,6 +92,7 @@ def main() -> None:
 
             if command == "connect":
                 service.connect(*args[0].split(maxsplit=1))
+                print(f"Connected to {args[0]}")
             elif command == "getleader":
                 response = service.get_leader()
                 print(*response)
