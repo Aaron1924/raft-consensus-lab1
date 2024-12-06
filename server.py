@@ -64,7 +64,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         
         #MongoBD connection
         database_name = f"raft_node_{self.server_id}_db"
-        self.mongo_client = MongoClient("mongodb://localhost:27017/{database_name}")
+        self.mongo_client = MongoClient("mongodb://127.0.0.1:27017/?directConnection=true&serverSelectionTimeoutMS=2000&appName=mongosh+2.3.4")
         self.db = self.mongo_client[database_name]
         self.term_collection = self.db["current terms"]
         self.logs_collection = self.db["logs"]
