@@ -95,6 +95,8 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.leader_address = None
         self.leader_timer = None
         self.should_interrupt = False
+        self.network_suspended = False
+
 
         #monitoring the nodes
         self.monitoring_thread = threading.Thread(target=self.monitor_nodes)
@@ -143,6 +145,8 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
     def suspend_network(self):
         print("More than half of the nodes are offline. Suspending network.")
         self.should_interrupt = True
+        self.state = "follower"
+        self.network_suspended = True
         if self.election_timer:
             self.election_timer.cancel()
         if self.leader_timer:
@@ -477,6 +481,8 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         return GetLeaderResponse(nodeId=node_id, nodeAddress=node_address)
 
     def SetVal(self, request: KeyValue, context):
+        if self.network_suspended:
+            return SetValResponse(success=False, message="Network is suspended")
         if self.state == "leader":
             log_entry = LogEntry(keyValue=request, term=self.current_term)
             self.logs.append(log_entry)
