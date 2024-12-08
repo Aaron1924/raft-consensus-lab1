@@ -14,6 +14,10 @@ service RaftElectionService {
   rpc SetVal(KeyValue) returns (SetValResponse);
 
   rpc GetVal(Key) returns (GetValResponse);
+
+  rpc Partition(PartitionRequest) returns (PartitionResponse);
+
+  rpc Unpartition(Void) returns (PartitionResponse);
 }
 
 
@@ -76,4 +80,13 @@ message SetValResponse {
 message GetValResponse {
   bool success = 1;
   string value = 2;
+}
+
+message PartitionRequest {
+    repeated int32 partition1 = 1;  
+    repeated int32 partition2 = 2;  
+}
+
+message PartitionResponse {
+    bool success = 1;
 }

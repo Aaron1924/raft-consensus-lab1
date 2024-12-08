@@ -25,6 +25,9 @@ SetValResponse = raft_pb2.SetValResponse
 GetValResponse = raft_pb2.GetValResponse
 LogEntry = raft_pb2.LogEntry
 
+PartitionRequest = raft_pb2.PartitionRequest
+PartitionResponse = raft_pb2.PartitionResponse
+
 HEARTBEAT_INTERVAL = 200  # ms
 ELECTION_INTERVAL = 500, 800  # ms
 
@@ -44,7 +47,6 @@ def start_after_time(period_sec: float, func: Callable, *args, **kwargs) -> None
 
 # noinspection PyUnresolvedReferences
 class RepeatTimer(threading.Timer):
-    """ Taken from https://stackoverflow.com/a/48741004/11825114 """
 
     def run(self) -> None:
         while not self.finished.wait(self.interval):
@@ -64,7 +66,9 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         
         #MongoBD connection
         database_name = f"raft_node_{self.server_id}_db"
-        self.mongo_client = MongoClient("mongodb://localhost:27017/{database_name}")
+
+        #Change URI to your MongoDB server
+        self.mongo_client = MongoClient("mongodb://127.0.0.1:27017/")
         self.db = self.mongo_client[database_name]
         self.term_collection = self.db["current terms"]
         self.logs_collection = self.db["logs"]
@@ -94,15 +98,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.leader_id = None
         self.leader_address = None
         self.leader_timer = None
+        self.partition1 = []
+        self.partition2 = []
+        self.is_partitioned = False
         self.should_interrupt = False
-        self.network_suspended = False
 
-
-        #monitoring the nodes
-        self.monitoring_thread = threading.Thread(target=self.monitor_nodes)
-        self.monitoring_thread.start()
-
-        
 
         #Load Current Term or set to 0
         term_data = self.term_collection.find_one({"server_id": server_id})
@@ -121,36 +121,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.start_following()
 
 
-    def monitor_nodes(self):
-        while True:
-            failed_nodes = self.check_node_status()
-            if failed_nodes > len(self.servers) / 2:
-                self.suspend_network()
-                break
-            time.sleep(10)  # Check every 10 seconds
 
-    def check_node_status(self) -> int:
-        failed_nodes = 0
-        for server_id, server_address in self.servers.items():
-            if not self.is_node_alive(server_id):
-                failed_nodes += 1
-        return failed_nodes
-
-    def is_node_alive(self, server_id: int) -> bool:
-        node_status = self.status_collection.find_one({"server_id": server_id})
-        if node_status and node_status["term"] == self.current_term:
-            return True
-        return False
-
-    def suspend_network(self):
-        print("More than half of the nodes are offline. Suspending network.")
-        self.should_interrupt = True
-        self.state = "follower"
-        self.network_suspended = True
-        if self.election_timer:
-            self.election_timer.cancel()
-        if self.leader_timer:
-            self.leader_timer.cancel()
 
     def start_election_timer(self) -> threading.Timer:
         """ Unit of timeout is ms """
@@ -400,6 +371,29 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                 key_value: KeyValue = self.logs[i].keyValue
                 self.data[key_value.key] = key_value.value  # deliver
             self.commit_length = leader_commit
+    
+    def Partition(self, request: PartitionRequest, context):
+        """ Partition the cluster into two sub-clusters """
+        self.partition1 = request.partition1
+        self.partition2 = request.partition2
+        self.is_partitioned = True
+        
+        # Update internal status (perhaps disable communication between partitions here)
+        print(f"Partitioning into two sub-clusters: {self.partition1} and {self.partition2}")
+        
+        return PartitionResponse(success=True)
+    
+    # Implement Unpartition RPC method
+    def Unpartition(self, request, context):
+        """ Unpartition the cluster, allowing full communication """
+        self.partition1 = []
+        self.partition2 = []
+        self.is_partitioned = False
+        
+        # Allow full communication again
+        print("Cluster unpartitioned. Full communication restored.")
+        
+        return PartitionResponse(success=True)
 
     def RequestVote(self, request, context):
         candidate_term = request.candidateTerm
@@ -481,8 +475,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         return GetLeaderResponse(nodeId=node_id, nodeAddress=node_address)
 
     def SetVal(self, request: KeyValue, context):
-        if self.network_suspended:
-            return SetValResponse(success=False, message="Network is suspended")
         if self.state == "leader":
             log_entry = LogEntry(keyValue=request, term=self.current_term)
             self.logs.append(log_entry)

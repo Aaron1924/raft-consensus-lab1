@@ -5,7 +5,7 @@ import warnings
 
 import raft_pb2 as raft__pb2
 
-GRPC_GENERATED_VERSION = '1.68.0'
+GRPC_GENERATED_VERSION = '1.68.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -64,6 +64,16 @@ class RaftElectionServiceStub(object):
                 request_serializer=raft__pb2.Key.SerializeToString,
                 response_deserializer=raft__pb2.GetValResponse.FromString,
                 _registered_method=True)
+        self.Partition = channel.unary_unary(
+                '/RaftElectionService/Partition',
+                request_serializer=raft__pb2.PartitionRequest.SerializeToString,
+                response_deserializer=raft__pb2.PartitionResponse.FromString,
+                _registered_method=True)
+        self.Unpartition = channel.unary_unary(
+                '/RaftElectionService/Unpartition',
+                request_serializer=raft__pb2.Void.SerializeToString,
+                response_deserializer=raft__pb2.PartitionResponse.FromString,
+                _registered_method=True)
 
 
 class RaftElectionServiceServicer(object):
@@ -105,6 +115,18 @@ class RaftElectionServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Partition(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Unpartition(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RaftElectionServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -137,6 +159,16 @@ def add_RaftElectionServiceServicer_to_server(servicer, server):
                     servicer.GetVal,
                     request_deserializer=raft__pb2.Key.FromString,
                     response_serializer=raft__pb2.GetValResponse.SerializeToString,
+            ),
+            'Partition': grpc.unary_unary_rpc_method_handler(
+                    servicer.Partition,
+                    request_deserializer=raft__pb2.PartitionRequest.FromString,
+                    response_serializer=raft__pb2.PartitionResponse.SerializeToString,
+            ),
+            'Unpartition': grpc.unary_unary_rpc_method_handler(
+                    servicer.Unpartition,
+                    request_deserializer=raft__pb2.Void.FromString,
+                    response_serializer=raft__pb2.PartitionResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -301,6 +333,60 @@ class RaftElectionService(object):
             '/RaftElectionService/GetVal',
             raft__pb2.Key.SerializeToString,
             raft__pb2.GetValResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Partition(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/RaftElectionService/Partition',
+            raft__pb2.PartitionRequest.SerializeToString,
+            raft__pb2.PartitionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Unpartition(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/RaftElectionService/Unpartition',
+            raft__pb2.Void.SerializeToString,
+            raft__pb2.PartitionResponse.FromString,
             options,
             channel_credentials,
             insecure,

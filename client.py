@@ -16,7 +16,8 @@ Key = raft_pb2.Key
 KeyValue = raft_pb2.KeyValue
 SetValResponse = raft_pb2.SetValResponse
 GetValResponse = raft_pb2.GetValResponse
-
+PartitionRequest = raft_pb2.PartitionRequest
+PartitionResponse = raft_pb2.PartitionResponse
 
 class CommandNotExistError(Exception):
     pass
@@ -65,6 +66,31 @@ class UserService:
         request = Key(key=key)
         response: GetValResponse = self.service.GetVal(request)
         return response.value if response.success else None
+    
+    def partition(self) -> None:
+
+        self.__validate_server()
+
+        partition1 = [0, 1, 2]  # First group (3 nodes)
+        partition2 = [3, 4]     # Second group (2 nodes)
+        
+        request = PartitionRequest(partition1=partition1, partition2=partition2)
+        
+        response: PartitionResponse = self.service.Partition(request)
+        if not response.success:
+            raise InternalSerivceError("Failed to partition the cluster.")
+        print("Cluster partitioned successfully into two sub-clusters.")
+
+    def unpartition(self) -> None:
+        """Unpartition the cluster to allow full communication."""
+        self.__validate_server()
+        # Send the unpartition request
+        request = Void()
+        response: PartitionResponse = self.service.Unpartition(request)
+        if not response.success:
+            raise InternalSerivceError("Failed to unpartition the cluster.")
+        print("Cluster unpartitioned successfully.")
+
 
     def __validate_server(self):
         if not self.service:
@@ -104,6 +130,10 @@ def main() -> None:
             elif command == "getval":
                 response = service.get_val(key=args[0])
                 print(response)
+            elif command == "partition":
+                service.partition()  
+            elif command == "unpartition":
+                service.unpartition()  
             elif command == "quit":
                 raise KeyboardInterrupt
             else:
@@ -118,6 +148,7 @@ def main() -> None:
         except Exception as e:
             print(e)
             print("Try again!")
+
 
 
 if __name__ == "__main__":
