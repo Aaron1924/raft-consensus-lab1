@@ -25,7 +25,7 @@ SetValResponse = raft_pb2.SetValResponse
 GetValResponse = raft_pb2.GetValResponse
 LogEntry = raft_pb2.LogEntry
 
-HEARTBEAT_INTERVAL = 5000  # ms
+HEARTBEAT_INTERVAL = 200  # ms
 ELECTION_INTERVAL = 500, 800  # ms
 
 
