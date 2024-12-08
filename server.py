@@ -95,6 +95,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.leader_address = None
         self.leader_timer = None
         self.should_interrupt = False
+
+        #monitoring the nodes
+        self.monitoring_thread = threading.Thread(target=self.monitor_nodes)
+        self.monitoring_thread.start()
+
         
 
         #Load Current Term or set to 0
@@ -113,6 +118,35 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         )
         self.start_following()
 
+
+    def monitor_nodes(self):
+        while True:
+            failed_nodes = self.check_node_status()
+            if failed_nodes > len(self.servers) / 2:
+                self.suspend_network()
+                break
+            time.sleep(10)  # Check every 10 seconds
+
+    def check_node_status(self) -> int:
+        failed_nodes = 0
+        for server_id, server_address in self.servers.items():
+            if not self.is_node_alive(server_id):
+                failed_nodes += 1
+        return failed_nodes
+
+    def is_node_alive(self, server_id: int) -> bool:
+        node_status = self.status_collection.find_one({"server_id": server_id})
+        if node_status and node_status["term"] == self.current_term:
+            return True
+        return False
+
+    def suspend_network(self):
+        print("More than half of the nodes are offline. Suspending network.")
+        self.should_interrupt = True
+        if self.election_timer:
+            self.election_timer.cancel()
+        if self.leader_timer:
+            self.leader_timer.cancel()
 
     def start_election_timer(self) -> threading.Timer:
         """ Unit of timeout is ms """
